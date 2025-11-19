@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -pedantic
+CFLAGS = -Wall -Wextra -std=c99 -pedantic -fsanitize=address
 TARGET = interpreter
 SOURCES = main.c functions.c
 TEST_SOURCES = test.c functions.c

@@ -187,3 +187,199 @@ StatusCode log_command(FILE* trace_file, int line_num, const char* command, cons
     
     return SUCCESS;
 }
+
+StatusCode process_single_command(const char* command, int line_num, VariablesState* vars, FILE* trace_file) {
+    if (command == NULL || vars == NULL || trace_file == NULL) {
+        return ERROR_NULL_POINTER;
+    }
+    
+    int pos = 0;
+    skip_spaces(command, &pos);
+    
+    if (strncmp(command + pos, "print", 5) == 0) {
+        pos += 5;
+        skip_spaces(command, &pos);
+        if (command[pos] != '(') {
+            return ERROR_SYNTAX;
+        }
+        pos++;
+        skip_spaces(command, &pos);
+        
+        int expr_start = pos;
+        while (command[pos] != '\0' && command[pos] != ')') {
+            pos++;
+        }
+        if (command[pos] != ')') {
+            return ERROR_SYNTAX;
+        }
+        
+        char expr[256];
+        int expr_len = pos - expr_start;
+        if (expr_len >= 256) {
+            return ERROR_INVALID_EXPRESSION;
+        }
+        strncpy(expr, command + expr_start, expr_len);
+        expr[expr_len] = '\0';
+        
+        int value;
+        int expr_pos = 0;
+        StatusCode status = eval_expression(expr, &expr_pos, vars->values, &value);
+        if (status != SUCCESS) {
+            return status;
+        }
+        
+        printf("%d\n", value);
+        
+        char full_command[256];
+        int command_len = pos + 1 - (command - command);
+        if (command_len >= 256) {
+            command_len = 255;
+        }
+        strncpy(full_command, command, command_len);
+        full_command[command_len] = '\0';
+        
+        return log_command(trace_file, line_num, full_command, vars, "Print");
+        
+    } else if (isupper(command[pos])) {
+        char var = command[pos];
+        int var_index = var - 'A';
+        pos++;
+        skip_spaces(command, &pos);
+        
+        if (command[pos] != '=') {
+            return ERROR_SYNTAX;
+        }
+        pos++;
+        skip_spaces(command, &pos);
+        
+        int expr_start = pos;
+        while (command[pos] != '\0') {
+            if (isupper(command[pos])) {
+                int j = pos + 1;
+                skip_spaces(command, &j);
+                if (command[j] == '=') {
+                    break;
+                }
+            } else if (strncmp(command + pos, "print", 5) == 0) {
+                int j = pos + 5;
+                skip_spaces(command, &j);
+                if (command[j] == '(') {
+                    break;
+                }
+            }
+            pos++;
+        }
+        
+        char expr[256];
+        int expr_len = pos - expr_start;
+        if (expr_len >= 256) {
+            return ERROR_INVALID_EXPRESSION;
+        }
+        strncpy(expr, command + expr_start, expr_len);
+        expr[expr_len] = '\0';
+        
+        int value;
+        int expr_pos = 0;
+        StatusCode status = eval_expression(expr, &expr_pos, vars->values, &value);
+        if (status != SUCCESS) {
+            return status;
+        }
+        
+        vars->values[var_index] = value;
+        vars->initialized[var_index] = 1;
+        
+        char full_command[256];
+        int command_len = pos - (command - command);
+        if (command_len >= 256) {
+            command_len = 255;
+        }
+        strncpy(full_command, command, command_len);
+        full_command[command_len] = '\0';
+        
+        const char* operation_type = get_operation_type(expr);
+        return log_command(trace_file, line_num, full_command, vars, operation_type);
+        
+    } else {
+        return ERROR_INVALID_COMMAND;
+    }
+}
+
+StatusCode process_line_without_delimiter(const char* line, int line_num, VariablesState* vars, FILE* trace_file) {
+    if (line == NULL || vars == NULL || trace_file == NULL) {
+        return ERROR_NULL_POINTER;
+    }
+    
+    char* line_copy = malloc(strlen(line) + 1);
+    if (line_copy == NULL) {
+        return ERROR_MEMORY;
+    }
+    strcpy(line_copy, line);
+    
+    int i = 0;
+    int len = strlen(line_copy);
+    
+    while (i < len) {
+        skip_spaces(line_copy, &i);
+        if (i >= len) break;
+        
+        int command_start = i;
+        
+        if (strncmp(&line_copy[i], "print", 5) == 0 && (i + 5 < len) && line_copy[i + 5] == '(') {
+            i += 5;
+            i++;
+            
+            while (i < len && line_copy[i] != ')') {
+                i++;
+            }
+            if (i >= len) {
+                free(line_copy);
+                return ERROR_SYNTAX;
+            }
+            i++;
+            
+        } else if (isupper(line_copy[i])) {
+            i++;
+            skip_spaces(line_copy, &i);
+            if (i >= len || line_copy[i] != '=') {
+                free(line_copy);
+                return ERROR_SYNTAX;
+            }
+            i++;
+            skip_spaces(line_copy, &i);
+            
+            while (i < len) {
+                if (isupper(line_copy[i])) {
+                    int j = i + 1;
+                    skip_spaces(line_copy, &j);
+                    if (j < len && line_copy[j] == '=') {
+                        break;
+                    }
+                } else if (strncmp(&line_copy[i], "print", 5) == 0 && (i + 5 < len) && line_copy[i + 5] == '(') {
+                    break;
+                }
+                i++;
+            }
+        } else {
+            free(line_copy);
+            return ERROR_INVALID_COMMAND;
+        }
+        
+        char command[256];
+        int command_len = i - command_start;
+        if (command_len >= 256) {
+            free(line_copy);
+            return ERROR_INVALID_COMMAND;
+        }
+        strncpy(command, &line_copy[command_start], command_len);
+        command[command_len] = '\0';
+        
+        StatusCode status = process_single_command(command, line_num, vars, trace_file);
+        if (status != SUCCESS) {
+            free(line_copy);
+            return status;
+        }
+    }
+    
+    free(line_copy);
+    return SUCCESS;
+}
